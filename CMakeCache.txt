@@ -201,6 +201,15 @@ EMSCRIPTEN_FORCE_COMPILERS:BOOL=ON
 EMSCRIPTEN_GENERATE_BITCODE_STATIC_LIBRARIES:BOOL=OFF
 
 //Value Computed by CMake
+FishWasm_BINARY_DIR:STATIC=/home/samue/fishAnimation
+
+//Value Computed by CMake
+FishWasm_IS_TOP_LEVEL:STATIC=ON
+
+//Value Computed by CMake
+FishWasm_SOURCE_DIR:STATIC=/home/samue/fishAnimation
+
+//Value Computed by CMake
 SDLCircle_BINARY_DIR:STATIC=/home/samue/fishAnimation
 
 //Value Computed by CMake
