@@ -55,7 +55,6 @@ static inline void drawQuadPolyline(SDL_Renderer *r,
     {
         float t = (float)i / (float)samples;
         float px, py;
-        // uses the quadPoint you already added
         quadPoint(t, ax, ay, cx, cy, bx, by, px, py);
         thickLineRGBA(r,
                       (Sint16)std::lround(px_prev), (Sint16)std::lround(py_prev),
@@ -68,12 +67,11 @@ static inline void drawQuadPolyline(SDL_Renderer *r,
 
 static inline float lerp(float a, float b, float t) { return a + (b - a) * t; }
 
-constexpr float MAX_SPINE_BEND_DEG = 31.0f; // max bend between adjacent spine links
-constexpr float MAX_NECK_BEND_DEG = 17.0f;  // max bend between head direction and first link
+constexpr float MAX_SPINE_BEND_DEG = 31.0f;
+constexpr float MAX_NECK_BEND_DEG = 17.0f;
 
 Fish::Fish()
 {
-    // create head with placeholder coords — will set real spawn below
     head = new Head(0.0f, 0.0f, 30);
 
     int partSizes[] = {45, 50, 55, 50, 45, 35, 25, 23, 20, 15};
@@ -81,15 +79,13 @@ Fish::Fish()
         bodyParts.emplace_back(0.0f, 0.0f, size);
 
     // --- spawn at top-left ---
-    const float MARGIN = 28.0f; // keep away from wall slightly
+    const float MARGIN = 28.0f;
     head->x = MARGIN;
     head->y = MARGIN;
-    head->direction = 90.0f; // facing down
+    head->direction = 90.0f;
 
-    // --- short launch period ---
-    launchFrames = 30; // ~0.5s at 60 FPS
+    launchFrames = 30;
 
-    // layout spine immediately behind head
     updateBody();
 }
 
@@ -127,48 +123,42 @@ static inline void cubicPoint(float t,
 void Fish::drawDorsalFinCurves(SDL_Renderer *renderer)
 {
     if (bodyParts.size() < 9)
-        return; // need indices 3..7
+        return;
 
-    // --- choose anchors (moved back by 1) ---
     int iA = 3;
     int iB = 6;
     iA = std::min(std::max(iA, 0), (int)bodyParts.size() - 2);
     iB = std::min(std::max(iB, iA + 1), (int)bodyParts.size() - 1);
 
-    // --- endpoints on spine ---
+    // endpoints on spine
     float Ax = bodyParts[iA].x, Ay = bodyParts[iA].y;
     float Bx = bodyParts[iB].x, By = bodyParts[iB].y;
 
-    // --- global back-normal (for coherent fin “up”) ---
     float spineDir = std::atan2(By - Ay, Bx - Ax);
     float gNx = -std::sin(spineDir), gNy = std::cos(spineDir);
 
-    // --- midpoint ---
+    // midpoint
     float midx = 0.5f * (Ax + Bx);
     float midy = 0.5f * (Ay + By);
 
-    // --- (kept) size knobs for reference (not used directly now) ---
     float subtleBase = 5.0f, subtleGain = 16.0f;
     float sharpBase = 10.0f, sharpGain = 40.0f;
 
-    // ===== smooth near-flat behavior: spring–damper on signed height =====
     float curvDeg = computeOverallCurvatureDeg();
 
-    // map curvature -> target height (odd & smooth around 0°)
-    constexpr float CURV_SOFTEN_DEG = 26.0f; // higher = flatter near zero
-    constexpr float H_MAX_SHARP = 30.0f;     // max |height| (px) for outer curve
+    constexpr float CURV_SOFTEN_DEG = 26.0f;
+    constexpr float H_MAX_SHARP = 30.0f;
     constexpr float DEG_AT_MAX = 90.0f;
     float raw = -H_MAX_SHARP * (curvDeg / DEG_AT_MAX);
     float hTarget = std::clamp(raw, -H_MAX_SHARP, H_MAX_SHARP);
 
-    // critically-damped spring for buttery zero-crossing (no jump)
     static bool s_init = false;
-    static float s_h = 0.0f; // current height (px)
-    static float s_v = 0.0f; // velocity (px/s)
+    static float s_h = 0.0f;
+    static float s_v = 0.0f;
 
-    const float dt = 1.0f / 60.0f; // assume ~60 FPS
-    const float omega = 7.0f;      // responsiveness (rad/s)
-    const float zeta = 1.0f;       // 1.0 = critical damping
+    const float dt = 1.0f / 60.0f;
+    const float omega = 7.0f;
+    const float zeta = 1.0f;
 
     if (!s_init)
     {
@@ -179,29 +169,25 @@ void Fish::drawDorsalFinCurves(SDL_Renderer *renderer)
     {
         float k = omega * omega;
         float c = 2.0f * zeta * omega;
-        float a = k * (hTarget - s_h) - c * s_v; // acceleration
+        float a = k * (hTarget - s_h) - c * s_v;
         s_v += a * dt;
         s_h += s_v * dt;
     }
 
-    // control points for the SHARP (outer) and SUBTLE (inner) curves
     float cSharpX = midx + gNx * (s_h * OUTER_CURVE_BOOST);
     float cSharpY = midy + gNy * (s_h * OUTER_CURVE_BOOST);
 
-    // inner sits closer to the spine (ratio of the smoothed height)
     constexpr float SUB_RATIO = 0.66f;
     float hSubtle = s_h * SUB_RATIO;
     float cSubtleX = midx + gNx * hSubtle;
     float cSubtleY = midy + gNy * hSubtle;
 
     // Colors
-    const Uint8 finR = 129, finG = 196, finB = 211, finA = 235; // fin fill/inner line color
-    const Uint8 outR = 245, outG = 245, outB = 235, outA = 255; // crisp outline color
+    const Uint8 finR = 129, finG = 196, finB = 211, finA = 235;
+    const Uint8 outR = 245, outG = 245, outB = 235, outA = 255;
 
-    // Sampling
-    const int SAMPLES = 28; // higher = smoother curves
+    const int SAMPLES = 28;
 
-    // --- sample both curves for fill and stroke ---
     std::vector<Sint16> sharpX;
     sharpX.reserve(SAMPLES + 1);
     std::vector<Sint16> sharpY;
@@ -225,7 +211,6 @@ void Fish::drawDorsalFinCurves(SDL_Renderer *renderer)
         subtleY.push_back((Sint16)std::lround(py));
     }
 
-    // --- fill between curves: sharp A->B then subtle B->A ---
     std::vector<Sint16> vx;
     vx.reserve(2 * (SAMPLES + 1));
     std::vector<Sint16> vy;
@@ -242,7 +227,6 @@ void Fish::drawDorsalFinCurves(SDL_Renderer *renderer)
     }
     filledPolygonRGBA(renderer, vx.data(), vy.data(), (int)vx.size(), finR, finG, finB, finA);
 
-    // --- crisp strokes with thickness that matches your body outline ---
     for (int i = 1; i <= SAMPLES; ++i)
     {
         thickLineRGBA(renderer,
@@ -285,7 +269,6 @@ void Fish::draw(SDL_Renderer *renderer)
 {
     std::vector<SDL_Point> leftOutline;
     std::vector<SDL_Point> rightOutline;
-    // for drawing the front and back parts
     auto frontPoints = getOutlineEndPoints(*head, bodyParts[0]);
     auto backPoints = getOutlineEndPoints(bodyParts[bodyParts.size() - 1], bodyParts[bodyParts.size() - 2]);
 
@@ -420,33 +403,29 @@ float shortestDiffDeg(float from, float to)
     return diff;
 }
 
-// -------------------------------------------
-// Call once per frame
 void Fish::swim(int canvasW, int canvasH)
 {
-    // --- Tunables (updated) ---
     constexpr float STEP_BASE = 8.0f;
-    constexpr float STEP = STEP_BASE * 1.2f; // 2× faster
-    constexpr float ARC_TURN_SPEED = 1.25f;  // gentle base arc
-    constexpr int ARC_MIN_DURATION = 35;     // more frequent arcs
+    constexpr float STEP = STEP_BASE * 1.2f;
+    constexpr float ARC_TURN_SPEED = 1.25f;
+    constexpr int ARC_MIN_DURATION = 35;
     constexpr int ARC_MAX_DURATION = 90;
-    constexpr float MAX_TOTAL_TURN = 1.0f; // clamp per frame (deg)
+    constexpr float MAX_TOTAL_TURN = 1.0f;
 
     constexpr float EDGE_GRADIENT = 140.0f;
-    constexpr float WALL_GAIN = 0.50f; // a bit stronger near walls
-    constexpr float CORNER_EXP = 2.2f; // stronger in corners
+    constexpr float WALL_GAIN = 0.50f;
+    constexpr float CORNER_EXP = 2.2f;
 
     // Anti-straight
-    constexpr float NEAR_ZERO_TURN = 0.12f; // what counts as "straight"
-    constexpr int STRAIGHT_FRAMES = 28;     // shorter allowed straight run
-    constexpr float KICK_TURN = 0.75f;      // nudged when too-straight
+    constexpr float NEAR_ZERO_TURN = 0.12f;
+    constexpr int STRAIGHT_FRAMES = 28;
+    constexpr float KICK_TURN = 0.75f;
 
     // Anti-spiral
-    constexpr int SAME_SIGN_LIMIT = 80;          // frames of same-turn sign -> flip
-    constexpr float SPIRAL_ANGLE_LIMIT = 220.0f; // deg of cumulative same-sign turn -> flip
-    constexpr float COUNTER_PULSE = 0.9f;        // quick counter-turn (deg) when flipping
+    constexpr int SAME_SIGN_LIMIT = 80;
+    constexpr float SPIRAL_ANGLE_LIMIT = 220.0f;
+    constexpr float COUNTER_PULSE = 0.9f;
 
-    // --- arc schedule: flip direction fairly often ---
     if (arcDurationFrames <= 0)
     {
         turnDirection = (rand() % 2 == 0) ? 1 : -1;
@@ -454,16 +433,16 @@ void Fish::swim(int canvasW, int canvasH)
     }
     arcDurationFrames--;
 
-    // --- base gentle arc ---
+    //  base gentle arc
     float desiredTurn = turnDirection * ARC_TURN_SPEED;
 
-    // --- small filtered jitter to avoid straight locks ---
+    // small filtered jitter to avoid straight lock
     static float turnBias = 0.0f;
     float r = (float)((rand() % 200) - 100) / 100.0f; // [-1,1]
     turnBias = 0.985f * turnBias + 0.015f * r;
     desiredTurn += turnBias * 0.15f;
 
-    // --- wall steering vector (single heading -> no corner confusion) ---
+    //  wall steering vector (single heading -> no corner confusion)
     auto addWall = [&](float dist, float nx, float ny, float range)
     {
         if (dist < range)
@@ -498,11 +477,10 @@ void Fish::swim(int canvasW, int canvasH)
         desiredTurn += wallInfluence * WALL_GAIN;
     }
 
-    // --- anti-straight & anti-spiral bookkeeping ---
     static int nearStraightFrames = 0;
     static int sameSignFrames = 0;
     static int lastSign = 0;
-    static float cumulativeSameSign = 0.0f; // sum of same-sign desiredTurn (deg)
+    static float cumulativeSameSign = 0.0f;
 
     int signNow = (desiredTurn > 0.0f) ? +1 : (desiredTurn < 0.0f ? -1 : 0);
 
@@ -514,17 +492,16 @@ void Fish::swim(int canvasW, int canvasH)
     if (signNow != 0 && signNow == lastSign)
     {
         sameSignFrames++;
-        cumulativeSameSign += desiredTurn; // same sign accumulation
+        cumulativeSameSign += desiredTurn;
     }
     else if (signNow != lastSign && signNow != 0)
     {
         sameSignFrames = 1;
-        cumulativeSameSign = desiredTurn; // reset accumulation on sign change
+        cumulativeSameSign = desiredTurn;
     }
     if (signNow != 0)
         lastSign = signNow;
 
-    // Too-straight: inject kick + shorten remaining arc
     if (nearStraightFrames > STRAIGHT_FRAMES)
     {
         desiredTurn += (rand() % 2 ? +KICK_TURN : -KICK_TURN);
@@ -532,34 +509,29 @@ void Fish::swim(int canvasW, int canvasH)
         nearStraightFrames = 0;
     }
 
-    // Spiral watchdog: if we’ve been turning same way too long OR too much angle -> flip
     if (sameSignFrames > SAME_SIGN_LIMIT || std::fabs(cumulativeSameSign) > SPIRAL_ANGLE_LIMIT)
     {
         turnDirection = -turnDirection;
         sameSignFrames = 0;
         cumulativeSameSign = 0.0f;
 
-        // quick counter pulse to break the circle immediately
         desiredTurn += (turnDirection > 0 ? +COUNTER_PULSE : -COUNTER_PULSE);
 
-        // restart arc window (but keep it short-ish)
         arcDurationFrames = ARC_MIN_DURATION + rand() % (ARC_MIN_DURATION / 2 + 1);
     }
 
-    // --- clamp and integrate heading ---
     float clampedTurn = std::clamp(desiredTurn, -MAX_TOTAL_TURN, MAX_TOTAL_TURN);
     head->direction = normDeg(head->direction + clampedTurn);
 
-    // --- move forward ---
+    // move forward
     float rad = head->direction * (M_PI / 180.f);
     float nextX = head->x + std::cos(rad) * STEP;
     float nextY = head->y + std::sin(rad) * STEP;
 
-    // --- emergency keep-in-canvas ---
     if (nextX < 0.f || nextX > canvasW || nextY < 0.f || nextY > canvasH)
     {
         if (sx == 0.0f && sy == 0.0f)
-        { // no wall vector? aim to center
+        {
             sx = (canvasW * 0.5f - head->x);
             sy = (canvasH * 0.5f - head->y);
         }
@@ -577,50 +549,39 @@ void Fish::swim(int canvasW, int canvasH)
 
 void Fish::updateBody()
 {
-    // Convert caps to radians once
     const float maxSpineBend = MAX_SPINE_BEND_DEG * (M_PI / 180.0f);
     const float maxNeckBend = MAX_NECK_BEND_DEG * (M_PI / 180.0f);
 
-    // ----- First segment follows the head with a neck bend cap -----
     BodyPart &first = bodyParts[0];
 
-    // Head direction in radians
     float headDirRad = head->direction * (M_PI / 180.0f);
 
-    // Desired direction from first segment toward head
     float desired0 = std::atan2(head->y - first.y, head->x - first.x);
 
-    // Clamp neck bend relative to head facing
     float delta0 = shortestDiffRad(headDirRad, desired0);
     delta0 = std::clamp(delta0, -maxNeckBend, maxNeckBend);
     float dir0 = headDirRad + delta0;
 
-    // Place first segment exactly SPINE_DISTANCE behind the head along clamped dir
     first.x = head->x - std::cos(dir0) * SPINE_DISTANCE;
     first.y = head->y - std::sin(dir0) * SPINE_DISTANCE;
 
-    // Keep track of previous segment direction for curvature continuity
     float prevDir = dir0;
 
-    // ----- Remaining segments: clamp bend vs. previous segment -----
     for (int i = 1; i < static_cast<int>(bodyParts.size()); ++i)
     {
         BodyPart &prev = bodyParts[i - 1];
         BodyPart &cur = bodyParts[i];
 
-        // Heading from current toward prev (where we want to go)
         float desired = std::atan2(prev.y - cur.y, prev.x - cur.x);
 
-        // Limit how much this segment can turn vs. previous segment's heading
         float delta = shortestDiffRad(prevDir, desired);
         delta = std::clamp(delta, -maxSpineBend, maxSpineBend);
         float dir = prevDir + delta;
 
-        // Place this segment SPINE_DISTANCE behind the previous one along clamped dir
         cur.x = prev.x - std::cos(dir) * SPINE_DISTANCE;
         cur.y = prev.y - std::sin(dir) * SPINE_DISTANCE;
 
-        prevDir = dir; // propagate heading down the spine
+        prevDir = dir;
     }
 }
 
