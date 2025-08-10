@@ -1,2 +1,28 @@
-emcmake cmake .
-emmake make
+🐟 SDL2 Fish Simulation
+A smooth, real-time fish animation built in modern C++ with SDL2, compiled to WebAssembly for the browser.
+The fish swims in gentle arcs, avoids edges and corners gracefully, and features articulated body movement for a natural look.
+
+🌐 Live Demo
+View the Fish Simulation
+
+🎯 Features
+Smooth swimming arcs with adjustable speed and turning rate
+
+Edge and corner avoidance with soft, natural course correction
+
+Articulated body movement using multiple body segments
+
+Real-time rendering in SDL2 with anti-aliased curves
+
+WebAssembly build for running natively in browsers
+
+🛠️ Technologies Used
+C++ 17
+
+SDL2
+
+SDL2_gfx for curve drawing
+
+Emscripten for WebAssembly compilation
+
+HTML / CSS / JavaScript for browser integration
