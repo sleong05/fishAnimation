@@ -1,3 +1,0 @@
-/home/samue/fishAnimation/CMakeFiles/main.dir
-/home/samue/fishAnimation/CMakeFiles/edit_cache.dir
-/home/samue/fishAnimation/CMakeFiles/rebuild_cache.dir

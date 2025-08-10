@@ -1,1 +1,0 @@
-/home/samue/fishAnimation/emsdk/upstream/emscripten/em++          -sUSE_SDL=2         -sUSE_SDL_GFX=2         -sWASM=1         -sALLOW_MEMORY_GROWTH=1         -sEXIT_RUNTIME=1         -sFULL_ES2=1         -sOFFSCREEN_FRAMEBUFFER=1         -sENVIRONMENT=web      @CMakeFiles/main.dir/objects1.rsp -o main.html 
