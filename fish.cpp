@@ -71,19 +71,26 @@ static inline float lerp(float a, float b, float t) { return a + (b - a) * t; }
 constexpr float MAX_SPINE_BEND_DEG = 31.0f; // max bend between adjacent spine links
 constexpr float MAX_NECK_BEND_DEG = 17.0f;  // max bend between head direction and first link
 
-Fish::Fish(int startingX, int startingY)
+Fish::Fish()
 {
-    head = new Head(startingX, startingY, 30);
+    // create head with placeholder coords — will set real spawn below
+    head = new Head(0.0f, 0.0f, 30);
 
     int partSizes[] = {45, 50, 55, 50, 45, 35, 25, 23, 20, 15};
+    for (int size : partSizes)
+        bodyParts.emplace_back(0.0f, 0.0f, size);
 
-    float xLocation = 800.0f;
-    for (int &size : partSizes)
-    {
+    // --- spawn at top-left ---
+    const float MARGIN = 28.0f; // keep away from wall slightly
+    head->x = MARGIN;
+    head->y = MARGIN;
+    head->direction = 90.0f; // facing down
 
-        bodyParts.emplace_back(xLocation, 400.0f, size);
-        xLocation -= 35;
-    }
+    // --- short launch period ---
+    launchFrames = 30; // ~0.5s at 60 FPS
+
+    // layout spine immediately behind head
+    updateBody();
 }
 
 Fish::~Fish()
@@ -417,48 +424,153 @@ float shortestDiffDeg(float from, float to)
 // Call once per frame
 void Fish::swim(int canvasW, int canvasH)
 {
-    constexpr float ARC_TURN_SPEED = 2.5f; // deg per frame
-    constexpr float STEP = 8.0f;           // swim speed
-    constexpr int ARC_MIN_DURATION = 80;   // min frames per arc
-    constexpr int ARC_MAX_DURATION = 180;
-    constexpr float WALL_ARC_BOOST = 1.8f;
-    constexpr float EDGE_GRADIENT = 120.0f;
-    constexpr float MAX_TOTAL_TURN = .9f;
+    // --- Tunables (updated) ---
+    constexpr float STEP_BASE = 8.0f;
+    constexpr float STEP = STEP_BASE * 1.2f; // 2× faster
+    constexpr float ARC_TURN_SPEED = 1.25f;  // gentle base arc
+    constexpr int ARC_MIN_DURATION = 35;     // more frequent arcs
+    constexpr int ARC_MAX_DURATION = 90;
+    constexpr float MAX_TOTAL_TURN = 1.0f; // clamp per frame (deg)
 
-    // 1. Occasionally flip turning direction (every few seconds)
+    constexpr float EDGE_GRADIENT = 140.0f;
+    constexpr float WALL_GAIN = 0.50f; // a bit stronger near walls
+    constexpr float CORNER_EXP = 2.2f; // stronger in corners
+
+    // Anti-straight
+    constexpr float NEAR_ZERO_TURN = 0.12f; // what counts as "straight"
+    constexpr int STRAIGHT_FRAMES = 28;     // shorter allowed straight run
+    constexpr float KICK_TURN = 0.75f;      // nudged when too-straight
+
+    // Anti-spiral
+    constexpr int SAME_SIGN_LIMIT = 80;          // frames of same-turn sign -> flip
+    constexpr float SPIRAL_ANGLE_LIMIT = 220.0f; // deg of cumulative same-sign turn -> flip
+    constexpr float COUNTER_PULSE = 0.9f;        // quick counter-turn (deg) when flipping
+
+    // --- arc schedule: flip direction fairly often ---
     if (arcDurationFrames <= 0)
     {
         turnDirection = (rand() % 2 == 0) ? 1 : -1;
-        arcDurationFrames = ARC_MIN_DURATION + rand() % (ARC_MAX_DURATION - ARC_MIN_DURATION);
+        arcDurationFrames = ARC_MIN_DURATION + rand() % (ARC_MAX_DURATION - ARC_MIN_DURATION + 1);
     }
     arcDurationFrames--;
 
-    // 2. Base turn: gentle continuous arc
+    // --- base gentle arc ---
     float desiredTurn = turnDirection * ARC_TURN_SPEED;
 
-    // 3. Steer away softly from walls
-    auto steerAway = [&](float dist, float steerTo)
+    // --- small filtered jitter to avoid straight locks ---
+    static float turnBias = 0.0f;
+    float r = (float)((rand() % 200) - 100) / 100.0f; // [-1,1]
+    turnBias = 0.985f * turnBias + 0.015f * r;
+    desiredTurn += turnBias * 0.15f;
+
+    // --- wall steering vector (single heading -> no corner confusion) ---
+    auto addWall = [&](float dist, float nx, float ny, float range)
     {
-        if (dist < EDGE_GRADIENT)
+        if (dist < range)
         {
-            float t = 1.0f - dist / EDGE_GRADIENT;
-            float wallInfluence = shortestDiffDeg(head->direction, steerTo);
-            desiredTurn += wallInfluence * t * 0.2f * WALL_ARC_BOOST;
+            float t = 1.0f - dist / range;
+            float w = std::pow(t, CORNER_EXP);
+            return std::pair<float, float>(nx * w, ny * w);
         }
+        return std::pair<float, float>(0.0f, 0.0f);
     };
 
-    steerAway(head->x, 0.0f);             // left
-    steerAway(canvasW - head->x, 180.0f); // right
-    steerAway(head->y, 90.0f);            // top
-    steerAway(canvasH - head->y, 270.0f); // bottom
+    float sx = 0.0f, sy = 0.0f;
+    {
+        auto vL = addWall(head->x, +1.0f, 0.0f, EDGE_GRADIENT);
+        sx += vL.first;
+        sy += vL.second;
+        auto vR = addWall(canvasW - head->x, -1.0f, 0.0f, EDGE_GRADIENT);
+        sx += vR.first;
+        sy += vR.second;
+        auto vT = addWall(head->y, 0.0f, +1.0f, EDGE_GRADIENT);
+        sx += vT.first;
+        sy += vT.second;
+        auto vB = addWall(canvasH - head->y, 0.0f, -1.0f, EDGE_GRADIENT);
+        sx += vB.first;
+        sy += vB.second;
+    }
 
+    if (sx != 0.0f || sy != 0.0f)
+    {
+        float steerTo = std::atan2(sy, sx) * (180.0f / M_PI);
+        float wallInfluence = shortestDiffDeg(head->direction, steerTo);
+        desiredTurn += wallInfluence * WALL_GAIN;
+    }
+
+    // --- anti-straight & anti-spiral bookkeeping ---
+    static int nearStraightFrames = 0;
+    static int sameSignFrames = 0;
+    static int lastSign = 0;
+    static float cumulativeSameSign = 0.0f; // sum of same-sign desiredTurn (deg)
+
+    int signNow = (desiredTurn > 0.0f) ? +1 : (desiredTurn < 0.0f ? -1 : 0);
+
+    if (std::fabs(desiredTurn) < NEAR_ZERO_TURN)
+        nearStraightFrames++;
+    else
+        nearStraightFrames = 0;
+
+    if (signNow != 0 && signNow == lastSign)
+    {
+        sameSignFrames++;
+        cumulativeSameSign += desiredTurn; // same sign accumulation
+    }
+    else if (signNow != lastSign && signNow != 0)
+    {
+        sameSignFrames = 1;
+        cumulativeSameSign = desiredTurn; // reset accumulation on sign change
+    }
+    if (signNow != 0)
+        lastSign = signNow;
+
+    // Too-straight: inject kick + shorten remaining arc
+    if (nearStraightFrames > STRAIGHT_FRAMES)
+    {
+        desiredTurn += (rand() % 2 ? +KICK_TURN : -KICK_TURN);
+        arcDurationFrames = std::min(arcDurationFrames, ARC_MIN_DURATION / 2);
+        nearStraightFrames = 0;
+    }
+
+    // Spiral watchdog: if we’ve been turning same way too long OR too much angle -> flip
+    if (sameSignFrames > SAME_SIGN_LIMIT || std::fabs(cumulativeSameSign) > SPIRAL_ANGLE_LIMIT)
+    {
+        turnDirection = -turnDirection;
+        sameSignFrames = 0;
+        cumulativeSameSign = 0.0f;
+
+        // quick counter pulse to break the circle immediately
+        desiredTurn += (turnDirection > 0 ? +COUNTER_PULSE : -COUNTER_PULSE);
+
+        // restart arc window (but keep it short-ish)
+        arcDurationFrames = ARC_MIN_DURATION + rand() % (ARC_MIN_DURATION / 2 + 1);
+    }
+
+    // --- clamp and integrate heading ---
     float clampedTurn = std::clamp(desiredTurn, -MAX_TOTAL_TURN, MAX_TOTAL_TURN);
     head->direction = normDeg(head->direction + clampedTurn);
 
-    // 5. Move forward
+    // --- move forward ---
     float rad = head->direction * (M_PI / 180.f);
     float nextX = head->x + std::cos(rad) * STEP;
     float nextY = head->y + std::sin(rad) * STEP;
+
+    // --- emergency keep-in-canvas ---
+    if (nextX < 0.f || nextX > canvasW || nextY < 0.f || nextY > canvasH)
+    {
+        if (sx == 0.0f && sy == 0.0f)
+        { // no wall vector? aim to center
+            sx = (canvasW * 0.5f - head->x);
+            sy = (canvasH * 0.5f - head->y);
+        }
+        float steerTo = std::atan2(sy, sx) * (180.0f / M_PI);
+        head->direction = normDeg(steerTo);
+        rad = head->direction * (M_PI / 180.f);
+
+        const float CORRECT_STEP = STEP * 0.6f;
+        nextX = std::clamp(head->x + std::cos(rad) * CORRECT_STEP, 0.0f, (float)canvasW);
+        nextY = std::clamp(head->y + std::sin(rad) * CORRECT_STEP, 0.0f, (float)canvasH);
+    }
 
     updateHead(nextX, nextY);
 }

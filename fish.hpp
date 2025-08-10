@@ -5,7 +5,7 @@
 class Fish
 {
 public:
-    Fish(int startingX, int startingY);
+    Fish();
     ~Fish();
 
     void swim(int canvasWidth, int canvasHeight);
@@ -21,6 +21,7 @@ public:
     void toggleDragging();
 
 private:
+    int launchFrames = 0;
     float computeOverallCurvatureDeg() const;
     void drawDorsalFinCurves(SDL_Renderer *renderer);
 

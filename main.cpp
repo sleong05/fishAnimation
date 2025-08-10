@@ -13,7 +13,7 @@ SDL_Renderer *renderer;
 //     {170, 170}
 // };
 
-Fish fish = Fish(835, 400);
+Fish fish = Fish();
 
 void loop()
 {
