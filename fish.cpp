@@ -150,7 +150,9 @@ void Fish::drawDorsalFinCurves(SDL_Renderer *renderer)
     // map curvature -> target height (odd & smooth around 0°)
     constexpr float CURV_SOFTEN_DEG = 26.0f; // higher = flatter near zero
     constexpr float H_MAX_SHARP = 30.0f;     // max |height| (px) for outer curve
-    float hTarget = -H_MAX_SHARP * std::tanh(curvDeg / CURV_SOFTEN_DEG);
+    constexpr float DEG_AT_MAX = 90.0f;
+    float raw = -H_MAX_SHARP * (curvDeg / DEG_AT_MAX);
+    float hTarget = std::clamp(raw, -H_MAX_SHARP, H_MAX_SHARP);
 
     // critically-damped spring for buttery zero-crossing (no jump)
     static bool s_init = false;
@@ -265,7 +267,8 @@ float Fish::computeOverallCurvatureDeg() const
         const auto &P = bodyParts[i - 1];
         const auto &C = bodyParts[i];
         float h = std::atan2(P.y - C.y, P.x - C.x);
-        sumRad += shortestDiffRad(prev, h);
+        double scaler = (i < 3) ? 1.6 : 1;
+        sumRad += shortestDiffRad(prev, h) * scaler;
         prev = h;
     }
     return sumRad * (180.0f / M_PI);
