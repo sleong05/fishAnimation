@@ -13,6 +13,64 @@
 #define STEP_SIZE 8.0f
 #define SPINE_DISTANCE 35
 
+constexpr int BODY_OUTLINE_THICKNESS = 2;
+constexpr float OUTER_CURVE_BOOST = 1.3f;
+
+static inline float radNorm(float a)
+{
+    while (a <= -M_PI)
+        a += 2.0f * M_PI;
+    while (a > M_PI)
+        a -= 2.0f * M_PI;
+    return a;
+}
+
+static inline float shortestDiffRad(float from, float to)
+{
+    return radNorm(to - from);
+}
+
+static inline void quadPoint(float t,
+                             float ax, float ay,
+                             float cx, float cy,
+                             float bx, float by,
+                             float &ox, float &oy)
+{
+    float u = 1.0f - t;
+    float uu = u * u;
+    float tt = t * t;
+    ox = uu * ax + 2.0f * u * t * cx + tt * bx;
+    oy = uu * ay + 2.0f * u * t * cy + tt * by;
+}
+
+static inline void drawQuadPolyline(SDL_Renderer *r,
+                                    float ax, float ay,
+                                    float cx, float cy,
+                                    float bx, float by,
+                                    int samples, int thickness,
+                                    Uint8 R, Uint8 G, Uint8 B, Uint8 A)
+{
+    float px_prev = ax, py_prev = ay;
+    for (int i = 1; i <= samples; ++i)
+    {
+        float t = (float)i / (float)samples;
+        float px, py;
+        // uses the quadPoint you already added
+        quadPoint(t, ax, ay, cx, cy, bx, by, px, py);
+        thickLineRGBA(r,
+                      (Sint16)std::lround(px_prev), (Sint16)std::lround(py_prev),
+                      (Sint16)std::lround(px), (Sint16)std::lround(py),
+                      thickness, R, G, B, A);
+        px_prev = px;
+        py_prev = py;
+    }
+}
+
+static inline float lerp(float a, float b, float t) { return a + (b - a) * t; }
+
+constexpr float MAX_SPINE_BEND_DEG = 31.0f; // max bend between adjacent spine links
+constexpr float MAX_NECK_BEND_DEG = 17.0f;  // max bend between head direction and first link
+
 Fish::Fish(int startingX, int startingY)
 {
     head = new Head(startingX, startingY, 30);
@@ -41,6 +99,176 @@ void Fish::drawCircles(SDL_Renderer *renderer)
     { // draw body parts
         draw_circle(renderer, bodyPart);
     }
+}
+
+static inline void cubicPoint(float t,
+                              float ax, float ay,
+                              float cx0, float cy0,
+                              float cx1, float cy1,
+                              float bx, float by,
+                              float &ox, float &oy)
+{
+    float u = 1.0f - t;
+    float uu = u * u;
+    float tt = t * t;
+    float uuu = uu * u;
+    float ttt = tt * t;
+    ox = uuu * ax + 3.0f * uu * t * cx0 + 3.0f * u * tt * cx1 + ttt * bx;
+    oy = uuu * ay + 3.0f * uu * t * cy0 + 3.0f * u * tt * cy1 + ttt * by;
+}
+
+void Fish::drawDorsalFinCurves(SDL_Renderer *renderer)
+{
+    if (bodyParts.size() < 9)
+        return; // need indices 3..7
+
+    // --- choose anchors (moved back by 1) ---
+    int iA = 3;
+    int iB = 6;
+    iA = std::min(std::max(iA, 0), (int)bodyParts.size() - 2);
+    iB = std::min(std::max(iB, iA + 1), (int)bodyParts.size() - 1);
+
+    // --- endpoints on spine ---
+    float Ax = bodyParts[iA].x, Ay = bodyParts[iA].y;
+    float Bx = bodyParts[iB].x, By = bodyParts[iB].y;
+
+    // --- global back-normal (for coherent fin “up”) ---
+    float spineDir = std::atan2(By - Ay, Bx - Ax);
+    float gNx = -std::sin(spineDir), gNy = std::cos(spineDir);
+
+    // --- midpoint ---
+    float midx = 0.5f * (Ax + Bx);
+    float midy = 0.5f * (Ay + By);
+
+    // --- (kept) size knobs for reference (not used directly now) ---
+    float subtleBase = 5.0f, subtleGain = 16.0f;
+    float sharpBase = 10.0f, sharpGain = 40.0f;
+
+    // ===== smooth near-flat behavior: spring–damper on signed height =====
+    float curvDeg = computeOverallCurvatureDeg();
+
+    // map curvature -> target height (odd & smooth around 0°)
+    constexpr float CURV_SOFTEN_DEG = 26.0f; // higher = flatter near zero
+    constexpr float H_MAX_SHARP = 30.0f;     // max |height| (px) for outer curve
+    float hTarget = -H_MAX_SHARP * std::tanh(curvDeg / CURV_SOFTEN_DEG);
+
+    // critically-damped spring for buttery zero-crossing (no jump)
+    static bool s_init = false;
+    static float s_h = 0.0f; // current height (px)
+    static float s_v = 0.0f; // velocity (px/s)
+
+    const float dt = 1.0f / 60.0f; // assume ~60 FPS
+    const float omega = 7.0f;      // responsiveness (rad/s)
+    const float zeta = 1.0f;       // 1.0 = critical damping
+
+    if (!s_init)
+    {
+        s_h = hTarget;
+        s_v = 0.0f;
+        s_init = true;
+    }
+    {
+        float k = omega * omega;
+        float c = 2.0f * zeta * omega;
+        float a = k * (hTarget - s_h) - c * s_v; // acceleration
+        s_v += a * dt;
+        s_h += s_v * dt;
+    }
+
+    // control points for the SHARP (outer) and SUBTLE (inner) curves
+    float cSharpX = midx + gNx * (s_h * OUTER_CURVE_BOOST);
+    float cSharpY = midy + gNy * (s_h * OUTER_CURVE_BOOST);
+
+    // inner sits closer to the spine (ratio of the smoothed height)
+    constexpr float SUB_RATIO = 0.66f;
+    float hSubtle = s_h * SUB_RATIO;
+    float cSubtleX = midx + gNx * hSubtle;
+    float cSubtleY = midy + gNy * hSubtle;
+
+    // Colors
+    const Uint8 finR = 129, finG = 196, finB = 211, finA = 235; // fin fill/inner line color
+    const Uint8 outR = 245, outG = 245, outB = 235, outA = 255; // crisp outline color
+
+    // Sampling
+    const int SAMPLES = 28; // higher = smoother curves
+
+    // --- sample both curves for fill and stroke ---
+    std::vector<Sint16> sharpX;
+    sharpX.reserve(SAMPLES + 1);
+    std::vector<Sint16> sharpY;
+    sharpY.reserve(SAMPLES + 1);
+    std::vector<Sint16> subtleX;
+    subtleX.reserve(SAMPLES + 1);
+    std::vector<Sint16> subtleY;
+    subtleY.reserve(SAMPLES + 1);
+
+    for (int i = 0; i <= SAMPLES; ++i)
+    {
+        float t = (float)i / (float)SAMPLES;
+        float px, py;
+
+        quadPoint(t, Ax, Ay, cSharpX, cSharpY, Bx, By, px, py);
+        sharpX.push_back((Sint16)std::lround(px));
+        sharpY.push_back((Sint16)std::lround(py));
+
+        quadPoint(t, Ax, Ay, cSubtleX, cSubtleY, Bx, By, px, py);
+        subtleX.push_back((Sint16)std::lround(px));
+        subtleY.push_back((Sint16)std::lround(py));
+    }
+
+    // --- fill between curves: sharp A->B then subtle B->A ---
+    std::vector<Sint16> vx;
+    vx.reserve(2 * (SAMPLES + 1));
+    std::vector<Sint16> vy;
+    vy.reserve(2 * (SAMPLES + 1));
+    for (int i = 0; i <= SAMPLES; ++i)
+    {
+        vx.push_back(sharpX[i]);
+        vy.push_back(sharpY[i]);
+    }
+    for (int i = SAMPLES; i >= 0; --i)
+    {
+        vx.push_back(subtleX[i]);
+        vy.push_back(subtleY[i]);
+    }
+    filledPolygonRGBA(renderer, vx.data(), vy.data(), (int)vx.size(), finR, finG, finB, finA);
+
+    // --- crisp strokes with thickness that matches your body outline ---
+    for (int i = 1; i <= SAMPLES; ++i)
+    {
+        thickLineRGBA(renderer,
+                      subtleX[i - 1], subtleY[i - 1],
+                      subtleX[i], subtleY[i],
+                      BODY_OUTLINE_THICKNESS, outR, outG, outB, outA);
+    }
+    for (int i = 1; i <= SAMPLES; ++i)
+    {
+        thickLineRGBA(renderer,
+                      sharpX[i - 1], sharpY[i - 1],
+                      sharpX[i], sharpY[i],
+                      BODY_OUTLINE_THICKNESS, outR, outG, outB, outA);
+    }
+}
+
+float Fish::computeOverallCurvatureDeg() const
+{
+    if (bodyParts.size() < 3)
+        return 0.0f;
+
+    // start from neck
+    float prev = std::atan2(head->y - bodyParts[0].y,
+                            head->x - bodyParts[0].x);
+
+    float sumRad = 0.0f;
+    for (int i = 1; i < (int)bodyParts.size(); ++i)
+    {
+        const auto &P = bodyParts[i - 1];
+        const auto &C = bodyParts[i];
+        float h = std::atan2(P.y - C.y, P.x - C.x);
+        sumRad += shortestDiffRad(prev, h);
+        prev = h;
+    }
+    return sumRad * (180.0f / M_PI);
 }
 
 void Fish::draw(SDL_Renderer *renderer)
@@ -93,6 +321,7 @@ void Fish::draw(SDL_Renderer *renderer)
     // fill in body
     fillBody(frontPoints, leftOutline, backPoints, rightOutline, renderer);
 
+    drawDorsalFinCurves(renderer);
     // draw outline
     drawOutline(renderer, leftOutline, frontPoints, rightOutline, backPoints);
 
@@ -233,18 +462,50 @@ void Fish::swim(int canvasW, int canvasH)
 
 void Fish::updateBody()
 {
-    BodyPart &firstPart = bodyParts[0];
-    auto [newX, newY] = getNewPosition(head->x, head->y, firstPart.x, firstPart.y, SPINE_DISTANCE);
-    firstPart.x = newX;
-    firstPart.y = newY;
+    // Convert caps to radians once
+    const float maxSpineBend = MAX_SPINE_BEND_DEG * (M_PI / 180.0f);
+    const float maxNeckBend = MAX_NECK_BEND_DEG * (M_PI / 180.0f);
 
-    for (int i = 1; i < bodyParts.size(); i++)
+    // ----- First segment follows the head with a neck bend cap -----
+    BodyPart &first = bodyParts[0];
+
+    // Head direction in radians
+    float headDirRad = head->direction * (M_PI / 180.0f);
+
+    // Desired direction from first segment toward head
+    float desired0 = std::atan2(head->y - first.y, head->x - first.x);
+
+    // Clamp neck bend relative to head facing
+    float delta0 = shortestDiffRad(headDirRad, desired0);
+    delta0 = std::clamp(delta0, -maxNeckBend, maxNeckBend);
+    float dir0 = headDirRad + delta0;
+
+    // Place first segment exactly SPINE_DISTANCE behind the head along clamped dir
+    first.x = head->x - std::cos(dir0) * SPINE_DISTANCE;
+    first.y = head->y - std::sin(dir0) * SPINE_DISTANCE;
+
+    // Keep track of previous segment direction for curvature continuity
+    float prevDir = dir0;
+
+    // ----- Remaining segments: clamp bend vs. previous segment -----
+    for (int i = 1; i < static_cast<int>(bodyParts.size()); ++i)
     {
-        BodyPart &infront = bodyParts[i - 1];
-        BodyPart &current = bodyParts[i];
-        auto [nextX, nextY] = getNewPosition(infront.x, infront.y, current.x, current.y, SPINE_DISTANCE);
-        current.x = nextX;
-        current.y = nextY;
+        BodyPart &prev = bodyParts[i - 1];
+        BodyPart &cur = bodyParts[i];
+
+        // Heading from current toward prev (where we want to go)
+        float desired = std::atan2(prev.y - cur.y, prev.x - cur.x);
+
+        // Limit how much this segment can turn vs. previous segment's heading
+        float delta = shortestDiffRad(prevDir, desired);
+        delta = std::clamp(delta, -maxSpineBend, maxSpineBend);
+        float dir = prevDir + delta;
+
+        // Place this segment SPINE_DISTANCE behind the previous one along clamped dir
+        cur.x = prev.x - std::cos(dir) * SPINE_DISTANCE;
+        cur.y = prev.y - std::sin(dir) * SPINE_DISTANCE;
+
+        prevDir = dir; // propagate heading down the spine
     }
 }
 

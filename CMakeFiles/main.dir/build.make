@@ -118,13 +118,11 @@ main_OBJECTS = \
 "CMakeFiles/main.dir/fish.cpp.o"
 
 # External object files for target main
-main_EXTERNAL_OBJECTS = \
-"/home/samue/fishAnimation/SDL2_gfxPrimitives.o"
+main_EXTERNAL_OBJECTS =
 
 main.html: CMakeFiles/main.dir/main.cpp.o
 main.html: CMakeFiles/main.dir/drawCircle.cpp.o
 main.html: CMakeFiles/main.dir/fish.cpp.o
-main.html: SDL2_gfxPrimitives.o
 main.html: CMakeFiles/main.dir/build.make
 main.html: CMakeFiles/main.dir/objects1.rsp
 main.html: CMakeFiles/main.dir/link.txt

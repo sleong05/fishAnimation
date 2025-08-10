@@ -24,5 +24,4 @@ add_executable(main
     main.cpp
     drawCircle.cpp
     fish.cpp
-    SDL2_gfxPrimitives.o
 )

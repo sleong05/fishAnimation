@@ -15,3 +15,6 @@ node_modules/
 .idea/
 emsdk/
 *.h
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake

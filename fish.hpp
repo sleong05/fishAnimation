@@ -21,6 +21,9 @@ public:
     void toggleDragging();
 
 private:
+    float computeOverallCurvatureDeg() const;
+    void drawDorsalFinCurves(SDL_Renderer *renderer);
+
     float turnBias = 0.0f; // persistent per-fish; + = CCW, − = CW
     // Add to the Fish class (public or private)
     int turnDirection = 1;     // +1 = CCW, -1 = CW

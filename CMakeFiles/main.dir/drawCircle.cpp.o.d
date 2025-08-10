@@ -664,4 +664,4 @@ CMakeFiles/main.dir/drawCircle.cpp.o: \
   /home/samue/fishAnimation/emsdk/upstream/emscripten/cache/sysroot/include/c++/v1/system_error \
   /home/samue/fishAnimation/emsdk/upstream/emscripten/cache/sysroot/include/c++/v1/streambuf \
   /home/samue/fishAnimation/emsdk/upstream/emscripten/cache/sysroot/include/c++/v1/cstdarg \
-  /home/samue/fishAnimation/SDL2_gfxPrimitives.h
+  /home/samue/fishAnimation/emsdk/upstream/emscripten/cache/sysroot/include/SDL2/SDL2_gfxPrimitives.h
